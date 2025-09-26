@@ -13,6 +13,7 @@
 
 interface Env {
 	OPENAI_API_KEY: string;
+	ADVICE_API_KEY: string;
 }
 
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
@@ -25,10 +26,15 @@ const SYSTEM_PROMPT = `麻雀の「何切る」アドバイザーとして、プ
 3. なぜその牌を切るべきか、簡潔な理由を説明すること
 4. 回答は120文字程度に収めること`;
 
-const corsHeaders = {
-	'Access-Control-Allow-Origin': '*',
-	'Access-Control-Allow-Methods': 'POST, OPTIONS',
-	'Access-Control-Allow-Headers': 'Content-Type',
+const ALLOWED_ORIGINS = ['app://nanikiru'];
+const buildCorsHeaders = (request: Request) => {
+	const origin = request.headers.get('Origin');
+	const allowOrigin = origin && ALLOWED_ORIGINS.includes(origin) ? origin : 'null';
+	return {
+		'Access-Control-Allow-Origin': allowOrigin,
+		'Access-Control-Allow-Methods': 'POST, OPTIONS',
+		'Access-Control-Allow-Headers': 'Content-Type, X-Advice-Api-Key',
+	};
 };
 
 type AdviceRequest = {
@@ -39,6 +45,8 @@ type AdviceRequest = {
 
 export default {
 	async fetch(request, env): Promise<Response> {
+		const corsHeaders = buildCorsHeaders(request);
+
 		if (request.method === 'OPTIONS') {
 			return new Response(null, { headers: corsHeaders });
 		}
@@ -50,9 +58,17 @@ export default {
 			});
 		}
 
-		if (!env.OPENAI_API_KEY) {
-			return new Response('Missing OPENAI_API_KEY', {
+		if (!env.OPENAI_API_KEY || !env.ADVICE_API_KEY) {
+			return new Response('Server misconfigured', {
 				status: 500,
+				headers: corsHeaders,
+			});
+		}
+
+		const providedKey = request.headers.get('X-Advice-Api-Key');
+		if (!providedKey || providedKey !== env.ADVICE_API_KEY) {
+			return new Response('Unauthorized', {
+				status: 401,
 				headers: corsHeaders,
 			});
 		}
