@@ -11,16 +11,98 @@
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
+interface Env {
+	OPENAI_API_KEY: string;
+}
+
+const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
+
+const SYSTEM_PROMPT = `麻雀の「何切る」アドバイザーとして、プレイヤーの手牌とドラの情報から最適な選択をアドバイスしてください。
+以下の点に注意してアドバイスを提供してください：
+あなたは麻雀漫画のキャラクターでヤクザの代打ちとして生計を立てている裏世界のプロです。そういう人物になりきってクールにアドバイスしてください。
+1. どの牌を切るべきか具体的に指摘すること
+2. 他家の聴牌気配は無視すること
+3. なぜその牌を切るべきか、簡潔な理由を説明すること
+4. 回答は120文字程度に収めること`;
+
+const corsHeaders = {
+	'Access-Control-Allow-Origin': '*',
+	'Access-Control-Allow-Methods': 'POST, OPTIONS',
+	'Access-Control-Allow-Headers': 'Content-Type',
+};
+
+type AdviceRequest = {
+	hand: unknown;
+	doras: unknown;
+	temperature?: number;
+};
+
 export default {
-	async fetch(request, env, ctx): Promise<Response> {
-		const url = new URL(request.url);
-		switch (url.pathname) {
-			case '/message':
-				return new Response('Hello, World!');
-			case '/random':
-				return new Response(crypto.randomUUID());
-			default:
-				return new Response('Not Found', { status: 404 });
+	async fetch(request, env): Promise<Response> {
+		if (request.method === 'OPTIONS') {
+			return new Response(null, { headers: corsHeaders });
 		}
+
+		if (request.method !== 'POST') {
+			return new Response('Method Not Allowed', {
+				status: 405,
+				headers: corsHeaders,
+			});
+		}
+
+		if (!env.OPENAI_API_KEY) {
+			return new Response('Missing OPENAI_API_KEY', {
+				status: 500,
+				headers: corsHeaders,
+			});
+		}
+
+		let payload: AdviceRequest;
+		try {
+			payload = (await request.json()) as AdviceRequest;
+		} catch (error) {
+			return new Response('Invalid JSON body', {
+				status: 400,
+				headers: corsHeaders,
+			});
+		}
+
+		if (!Array.isArray(payload.hand) || !Array.isArray(payload.doras)) {
+			return new Response('`hand` and `doras` must be arrays', {
+				status: 400,
+				headers: corsHeaders,
+			});
+		}
+
+		const body = JSON.stringify({
+			model: 'gpt-4o',
+			messages: [
+				{ role: 'system', content: SYSTEM_PROMPT },
+				{
+					role: 'user',
+					content: `以下の手牌とドラ情報から、どの牌を切るべきかアドバイスしてください：\n手牌: ${JSON.stringify(payload.hand, null, 2)}\nドラ: ${JSON.stringify(payload.doras, null, 2)}`,
+				},
+			],
+			temperature: typeof payload.temperature === 'number' ? payload.temperature : 0.7,
+			max_tokens: 200,
+		});
+
+		const openAiResponse = await fetch(OPENAI_URL, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+			},
+			body,
+		});
+
+		const responseBody = await openAiResponse.text();
+		return new Response(responseBody, {
+			status: openAiResponse.status,
+			headers: {
+				...corsHeaders,
+				'Content-Type': 'application/json',
+			},
+		});
 	},
 } satisfies ExportedHandler<Env>;
